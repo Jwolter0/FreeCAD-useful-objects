@@ -1,0 +1,207 @@
+from __future__ import division # allows floating point division from integers
+import FreeCAD, FreeCADGui, Part, math
+from FreeCAD import Base
+
+'''BoxBeam routine to generate a box beam using strut elements.  Useful for 
+	a structure that is lightweight and strong.  '''
+
+def vectInt(endpoint1, endpoint2, newx):
+	# performs linear interpolation between two vector points
+	# returns a vector point at the interpolated x coordinate
+	frac = (newx - endpoint1.x)/(endpoint2.x - endpoint1.x)
+	return Base.Vector(newx, endpoint1.y + frac*(endpoint2.y - endpoint1.y), endpoint1.z + frac*(endpoint2.z - endpoint1.z))
+
+def makePrism(points, extrudeVector,lowerLimit, upperLimit):
+	# Makes a triangular prism, unless the triangle extends beyond the lowerLimit or upperLimit 
+	# in the x direction, in which case the routine clips the triangle.  Points shoulc be arranged
+    # least to greatest in x position.
+	aPoints = points
+	if lowerLimit > upperLimit:
+		print "Error: lowerLimit > upperLimit"
+	if aPoints[2].x > upperLimit:
+		if aPoints[1].x > upperLimit:
+			aPoints = [aPoints[0], vectInt(aPoints[0], aPoints[1], upperLimit), vectInt(aPoints[0], aPoints[2], upperLimit)]
+		else:
+			aPoints = aPoints[0:2] + [vectInt(aPoints[1], aPoints[2], upperLimit), vectInt(aPoints[0], aPoints[2], upperLimit)]
+	if aPoints[0].x < lowerLimit:
+		if aPoints[1].x < lowerLimit:
+			aPoints = [vectInt(aPoints[0], aPoints[-1], lowerLimit), vectInt(aPoints[1], aPoints[-1], lowerLimit), aPoints[-1]]  
+		else:
+			aPoints = [vectInt(aPoints[0], aPoints[-1], lowerLimit), vectInt(aPoints[0], aPoints[1], lowerLimit)] + aPoints[1:]
+	aSegments = []
+	for i in range(len(aPoints)-1):
+		aSegments.append(Part.Line(aPoints[i],aPoints[i+1]))
+	aSegments.append(Part.Line(aPoints[len(aPoints)-1],aPoints[0]))
+	aEdges = [aS.toShape() for aS in aSegments]
+	aWire = Part.Wire(aEdges)
+	aFace = Part.Face(aWire)
+	aBody = aFace.extrude(extrudeVector)
+	return aBody
+
+def makeBoxBeam(Length, WidthHeight, Thickness, openEnds): 
+	'''
+	This is a macro for the open source CAD program FreeCAD.
+	Generates a box beam of dimensions Length x WidthHeight x WidthHeight.  To save weight, the box beam will be made of beam 
+	elements with a cross-section of Thickness x Thickness.  
+	'''
+	doc = FreeCAD.activeDocument()
+	l = Length
+	wh = WidthHeight
+	t = Thickness
+	ohl = l/2 # outer half length
+	ohw = wh/2 # outer half width
+	outerBox = Part.makeBox(l,wh,wh,Base.Vector(-ohl,-ohw, -ohw))
+	if wh > 2*t:
+		ihl = ohl - t # inner half length
+		ihw = ohw - t # inner half width
+		if openEnds:
+			negativeSpace = Part.makeBox(2*ohl,2*ihw,2*ihw,Base.Vector(-ohl,-ihw,-ihw))
+		else:
+			negativeSpace = Part.makeBox(2*ihl,2*ihw,2*ihw,Base.Vector(-ihl,-ihw,-ihw))
+		prism = makePrism([Base.Vector(-2*ihw,-ihw,ohw), Base.Vector(0,ihw,ohw),Base.Vector(2*ihw,-ihw,ohw)],Base.Vector(0,0,-t),-ihl,ihl)
+		negativeSpace = negativeSpace.fuse(prism)
+		prism = makePrism([Base.Vector(-2*ihw,ohw,-ihw), Base.Vector(0,ohw,ihw),Base.Vector(2*ihw,ohw,-ihw)],Base.Vector(0,-t,0),-ihl,ihl)
+		negativeSpace = negativeSpace.fuse(prism)
+		prism = makePrism([Base.Vector(-2*ihw,ihw,-ohw), Base.Vector(0,-ihw,-ohw),Base.Vector(2*ihw,ihw,-ohw)],Base.Vector(0,0,t),-ihl,ihl)
+		negativeSpace = negativeSpace.fuse(prism)
+		prism = makePrism([Base.Vector(-2*ihw,-ohw,ihw), Base.Vector(0,-ohw,-ihw),Base.Vector(2*ihw,-ohw,ihw)],Base.Vector(0,t,0),-ihl,ihl)
+		negativeSpace = negativeSpace.fuse(prism)
+		offset = 2*ihw + t*math.sqrt(2)
+		orient = -1.0
+		while offset - 2*ihw  < ihl:
+			prism = makePrism([Base.Vector(offset-2*ihw,-ihw*orient,ohw), Base.Vector(offset,ihw*orient,ohw),Base.Vector(2*ihw+offset,-ihw*orient,ohw)],Base.Vector(0,0,-t),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(offset-2*ihw,ohw,-ihw*orient), Base.Vector(offset,ohw,ihw*orient),Base.Vector(2*ihw+offset,ohw,-ihw*orient)],Base.Vector(0,-t,0),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(offset-2*ihw,ihw*orient,-ohw), Base.Vector(offset,-ihw*orient,-ohw),Base.Vector(2*ihw+offset,ihw*orient,-ohw)],Base.Vector(0,0,t),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(offset-2*ihw,-ohw,ihw*orient), Base.Vector(offset,-ohw,-ihw*orient),Base.Vector(2*ihw+offset,-ohw,ihw*orient)],Base.Vector(0,t,0),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(-2*ihw-offset,-ihw*orient,ohw), Base.Vector(-offset,ihw*orient,ohw),Base.Vector(2*ihw-offset,-ihw*orient,ohw)],Base.Vector(0,0,-t),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(-2*ihw-offset,ohw,-ihw*orient), Base.Vector(-offset,ohw,ihw*orient),Base.Vector(2*ihw-offset,ohw,-ihw*orient)],Base.Vector(0,-t,0),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(-2*ihw-offset,ihw*orient,-ohw), Base.Vector(-offset,-ihw*orient,-ohw),Base.Vector(2*ihw-offset,ihw*orient,-ohw)],Base.Vector(0,0,t),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			prism = makePrism([Base.Vector(-2*ihw-offset,-ohw,ihw*orient), Base.Vector(-offset,-ohw,-ihw*orient),Base.Vector(2*ihw-offset,-ohw,ihw*orient)],Base.Vector(0,t,0),-ihl,ihl)
+			negativeSpace = negativeSpace.fuse(prism)
+			orient = -orient
+			offset = offset + 2*ihw + t*math.sqrt(2) 
+
+		holeyBeam = outerBox.cut(negativeSpace)
+		return holeyBeam
+	else:
+		return outerBox
+
+def makeFoxBeam(Length, WidthHeight, Thickness, openEnds): 
+	'''
+	This is a macro for the open source CAD program FreeCAD.
+	Generates a faux box beam to speed testing.  Takes the same arguments as makeBoxBeam.  
+	'''
+	doc = FreeCAD.activeDocument()
+	l = Length
+	wh = WidthHeight
+	t = Thickness
+	ohl = l/2 # outer half length
+	ohw = wh/2 # outer half width
+	outerBox = Part.makeBox(l,wh,wh,Base.Vector(-ohl,-ohw, -ohw))
+	return outerBox
+
+def makeMetaBoxBeam(Length, WidthHeight, Thickness):
+	doc = FreeCAD.activeDocument()
+	l = Length
+	wh = WidthHeight
+	t = Thickness
+	ohl = l/2 # outer half length
+	ohw = wh/2 # outer half width
+	#
+	ihl = ohl - t # inner half length
+	ihw = ohw - t # inner half width
+	# make the stringers
+	s1 = makeBoxBeam(l, t, t*t/wh, True)
+	s1.Placement.Base = Base.Vector(0,  (wh - t)/2,  (wh - t)/2)
+	s2 = makeBoxBeam(l, t, t*t/wh, True)
+	s2.Placement.Base = Base.Vector(0, -(wh - t)/2,  (wh - t)/2)
+	s3 = makeBoxBeam(l, t, t*t/wh, True)
+	s3.Placement.Base = Base.Vector(0, -(wh - t)/2, -(wh - t)/2)
+	s4 = makeBoxBeam(l, t, t*t/wh, True)
+	s4.Placement.Base = Base.Vector(0,  (wh - t)/2, -(wh - t)/2)
+	# make the end pieces
+	# +x +y
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 1, 0), 90)
+	e.translate(Base.Vector((ihl+ohl)/2, (ohw + ihw)/2, 0))
+	s1 = s1.fuse(e)
+	# -x +y
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, -1, 0), 90)
+	e.translate(Base.Vector(-(ihl+ohl)/2, (ohw + ihw)/2, 0))
+	s1 = s1.fuse(e)
+	# +x +z
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 90)
+	e.translate(Base.Vector((ihl+ohl)/2, 0, (ohw + ihw)/2))
+	s2 = s2.fuse(e)
+	# -x +z
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, -1), 90)
+	e.translate(Base.Vector(-(ihl+ohl)/2, 0, (ohw + ihw)/2))
+	s2 = s2.fuse(e)
+	# +x -y
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 1, 0), 90)
+	e.translate(Base.Vector((ihl+ohl)/2, -(ohw + ihw)/2, 0))
+	s3 = s3.fuse(e)
+	# -x -y
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, -1, 0), 90)
+	e.translate(Base.Vector(-(ihl+ohl)/2, -(ohw + ihw)/2, 0))
+	s3 = s3.fuse(e)
+	# +x -z
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 90)
+	e.translate(Base.Vector((ihl+ohl)/2, 0, -(ohw + ihw)/2))
+	s4 = s4.fuse(e)
+	# -x -z
+	e = makeBoxBeam(2*ihw, t, t*t/wh, True)
+	e.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, -1), 90)
+	e.translate(Base.Vector(-(ihl+ohl)/2, 0, -(ohw + ihw)/2))
+	s4 = s4.fuse(e)
+	# make the diagonals
+	offset = 0
+	orient = 1
+	while offset < ihl:
+		# +x +y
+		dp = makeBoxBeam(wh*math.sqrt(2),t,t*t/wh,True)
+		dp.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 1, 0), orient*45)
+		bb = Part.makeBox(min(2*ihw,ihl-offset),t,2*ihw,Base.Vector(-ihw, -t/2, -ihw)) # bounding box for diagonal element
+		dp = dp.common(bb) # clip anything outside of the bounding box
+		dp.translate(Base.Vector(offset + ihw, (ohw + ihw)/2, 0))
+		dn = dp.copy()
+		dn.rotate(Base.Vector(0, (ohw + ihw)/2, 0), Base.Vector(0, 0, 1), 180)
+		d1 = dp.fuse(dn)
+		d2 = d1.copy()
+		s1 = s1.fuse(d1)
+		d2.rotate(Base.Vector(0, (ohw + ihw)/2, (ohw + ihw)/2), Base.Vector(1, 0, 0), 270)
+		d3 = d2.copy()
+		s2 = s2.fuse(d2)
+		d3.rotate(Base.Vector(0, -(ohw + ihw)/2, (ohw + ihw)/2), Base.Vector(1, 0, 0), 270)
+		d4 = d3.copy()
+		s3 = s3.fuse(d3)
+		d4.rotate(Base.Vector(0, -(ohw + ihw)/2, -(ohw + ihw)/2), Base.Vector(1, 0, 0), 270)
+		s4 = s4.fuse(d4)
+		#
+		offset = offset + 2*ihw
+		orient = -orient
+	#
+	meta = s1.fuse(s2).fuse(s3).fuse(s4)
+	return meta
+
+if __name__ == "__main__": #feature will be generated after macro execution
+	print "-------------------------------"
+	#bb1 = makeBoxBeam(250, 25, 3, False)
+	bb1 = makeMetaBoxBeam(250, 25, 3)
+	Part.show(bb1)
+	#App.ActiveDocument.recompute()
+	Gui.activeDocument().activeView().viewAxometric()
+	Gui.SendMsgToActiveView("ViewFit")
